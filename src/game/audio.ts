@@ -44,18 +44,21 @@ export class AudioManager {
   playTrack(index: number) {
     try {
       const n = index % TRACKS.length;
+      const track = TRACKS[n];
+      if (!track) return;
       const key = `track${n}`;
       const start = () => {
         if (!this.scene.cache.audio.exists(key)) return;
         const next = this.scene.sound.add(key, { loop: true, volume: 0 });
         const prev = this.music;
+        if (prev) this.scene.tweens.killTweensOf(prev);
         this.music = next;
         next.play();
         this.scene.tweens.add({ targets: next, volume: this.musicVol * 0.6, duration: 1200 });
         if (prev) this.scene.tweens.add({ targets: prev, volume: 0, duration: 900, onComplete: () => prev.destroy() });
       };
       if (this.scene.cache.audio.exists(key)) return start();
-      this.scene.load.audio(key, TRACKS[n]!.url);
+       this.scene.load.audio(key, track.url);
       this.scene.load.once(`filecomplete-audio-${key}`, start);
       this.scene.load.start();
     } catch {
