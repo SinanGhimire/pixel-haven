@@ -8,3 +8,8 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Keep Phaser dynamically imported in the browser-only game view; SSR must never evaluate the game engine.
+- Resolve game artwork through the logical-path media registry and immutable asset pointers; this preserves loader contracts without committing binaries.
+- Define each fantasy world in the map registry using matching source layers, floor tiles, and props; maintain a common playable floor and uniform pixel scale.
+- Preserve the original device-local game progress and settings; this scenery migration must not change progression or introduce account requirements.
