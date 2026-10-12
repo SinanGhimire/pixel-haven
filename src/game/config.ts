@@ -9,7 +9,9 @@ export const VIEW = { WIDTH: 640, HEIGHT: 360, TILE: 16, ROWS: 14, ZOOM: 1.6, GR
 // Arena maps (Anokolisa Legacy packs). The map changes every wave, cycling through this list.
 // Every map is built from its pack's own tileset: ground.png (3x3 tiles), bgN.png backdrops, props/N.png set dressing.
 export type MapDef = { id: string; name: string; outdoor: boolean; floor: boolean; layers: number[][]; props: number[][] };
-export const MAPS: MapDef[] = mapsJson as MapDef[];
+export const ALL_MAPS: MapDef[] = mapsJson as MapDef[];
+// Keep source artwork registered, but do not send players into the broken swamp export.
+export const MAPS: MapDef[] = ALL_MAPS.filter((map) => map.id !== "swamp");
 
 // Portal + map transition (after each wave a portal opens; walking in wipes to the next map).
 export const PORTAL = { DISTANCE: 150, WIPE_MS: 480, HOLD_MS: 220 };

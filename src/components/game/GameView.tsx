@@ -3,6 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import type { Upgrade } from "@/game/rules";
 import { SaveManager, type Settings } from "@/game/save";
 import { SettingsPanel } from "./SettingsPanel";
+import { createClientOnlyFn } from "@tanstack/react-start";
+
+const loadEngine = createClientOnlyFn(async () => {
+  const Phaser = (await import("phaser")).default;
+  const { ArenaScene } = await import("@/game/ArenaScene");
+  return { Phaser, ArenaScene };
+});
 
 type Hud = {
   hp: number; maxHp: number; lvl: number; xp: number; xpNext: number; special: number; specialMax: number;
@@ -42,8 +49,7 @@ export function GameView({ onHome }: { onHome: () => void }) {
     const later = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms));
     let nid = 0;
     (async () => {
-      const Phaser = (await import("phaser")).default;
-      const { ArenaScene } = await import("@/game/ArenaScene");
+      const { Phaser, ArenaScene } = await loadEngine();
       if (destroyed || !ref.current) return;
       const bus = new Phaser.Events.EventEmitter();
       busRef.current = bus;
