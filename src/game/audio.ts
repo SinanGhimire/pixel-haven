@@ -21,6 +21,7 @@ const FILES: Partial<Record<AudioEvent, string>> = { levelUp: "magic", bossDeath
 
 export class AudioManager {
   private music?: Phaser.Sound.BaseSound;
+  private trackRequest = 0;
   constructor(private scene: Phaser.Scene) {}
   musicVol = 0.5;
   sfxVol = 0.8;
@@ -28,7 +29,7 @@ export class AudioManager {
     this.musicVol = music;
     this.sfxVol = sfxV;
     setSfxVolume(sfxV);
-    if (this.music) (this.music as Phaser.Sound.WebAudioSound).setVolume?.(music * 0.6);
+    if (this.music && !this.music.pendingRemove) (this.music as Phaser.Sound.WebAudioSound).setVolume?.(music * 0.6);
   }
   startMusic() {
     try {
@@ -42,20 +43,21 @@ export class AudioManager {
   }
   /** Each area gets its own song from the music pack; streamed on demand so startup stays light. */
   playTrack(index: number) {
+    const request = ++this.trackRequest;
     try {
       const n = index % TRACKS.length;
       const track = TRACKS[n];
       if (!track) return;
       const key = `track${n}`;
       const start = () => {
-        if (!this.scene.cache.audio.exists(key)) return;
+        if (request !== this.trackRequest || !this.scene.sys.isActive() || !this.scene.cache.audio.exists(key)) return;
         const next = this.scene.sound.add(key, { loop: true, volume: 0 });
         const prev = this.music;
         if (prev) this.scene.tweens.killTweensOf(prev);
         this.music = next;
         next.play();
         this.scene.tweens.add({ targets: next, volume: this.musicVol * 0.6, duration: 1200 });
-        if (prev) this.scene.tweens.add({ targets: prev, volume: 0, duration: 900, onComplete: () => prev.destroy() });
+        if (prev && !prev.pendingRemove) this.scene.tweens.add({ targets: prev, volume: 0, duration: 900, onComplete: () => { if (!prev.pendingRemove) prev.destroy(); } });
       };
       if (this.scene.cache.audio.exists(key)) return start();
        this.scene.load.audio(key, track.url);

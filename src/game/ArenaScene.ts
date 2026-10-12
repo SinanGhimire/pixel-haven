@@ -11,6 +11,9 @@ import { WaveManager } from "./WaveManager";
 import { soulsForRun, addXp, applyUpgrade, comboMultiplier, freshStats, heal, pickUpgrades, resolveIncoming, waveScaling, xpForLevel, type Stats } from "./rules";
 import { SaveManager, type Settings } from "./save";
 import { heroById } from "./heroes";
+import { generatePlatforms, SKY_RISE, type Platform } from "./platforms";
+import { canDropThrough, canLandOnLedge } from "./platformPhysics";
+import { parallaxLayout, repeatedLayerPositions } from "./parallax";
 
 export type GameState = "PLAYING" | "PAUSED" | "WAVE_TRANSITION" | "LEVEL_UP" | "SHOP" | "BOSS_INTRO" | "BOSS_FIGHT" | "PORTAL" | "GAME_OVER";
 export type TouchInput = { left: boolean; right: boolean; jump: boolean; attack: boolean; dash: boolean; block: boolean; special: boolean };
@@ -55,7 +58,12 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
   boss: Enemy | undefined;
   bossSpawned = new Set<number>();
   hitstopUntil = 0;
-  bgs: Phaser.GameObjects.TileSprite[] = [];
+  bgs: { images: Phaser.GameObjects.Image[]; sourceWidth: number; scale: number; width: number; y: number; speed: number }[] = [];
+  platforms?: Phaser.Physics.Arcade.StaticGroup;
+  platformDefs: Platform[] = [];
+  platformColliders: Phaser.Physics.Arcade.Collider[] = [];
+  playerOnPlatAt = -Infinity;
+  dropUntil = 0;
   mapObjects: Phaser.GameObjects.GameObject[] = [];
   mapColliders: Phaser.Physics.Arcade.Collider[] = [];
   mapIndex = 0;
@@ -90,6 +98,12 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     this.echoRec = new EchoRecorder(ECHO.INTERVAL, ECHO.CHECKPOINT_MS);
     this.bossSpawned = new Set();
     this.hitThisSwing = new Set();
+    this.platforms = undefined;
+    this.layer = undefined as unknown as Phaser.Tilemaps.TilemapLayer;
+    this.platformColliders = [];
+    this.platformDefs = [];
+    this.playerOnPlatAt = -Infinity;
+    this.dropUntil = 0;
   }
 
   preload() {
@@ -113,7 +127,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     this.sparks = this.add.particles(0, 0, "px", { lifespan: 350, speed: { min: 80, max: 220 }, scale: { start: 1.4, end: 0 }, tint: [0xffffff, 0xffe08a, 0xff9e4a], blendMode: "ADD", emitting: false }).setDepth(9);
     this.ambient = this.add.particles(0, 0, "dot", { x: { min: 0, max: this.scale.width }, y: { min: 0, max: VIEW.HEIGHT }, lifespan: 6000, speedX: { min: -8, max: 8 }, speedY: { min: -10, max: -2 }, scale: { min: 0.15, max: 0.4 }, alpha: { start: 0, end: 0.9, ease: "Sine.inOut" }, tint: 0xffe9a8, blendMode: "ADD", frequency: 220 }).setScrollFactor(0.4).setDepth(7);
 
-    this.hero = new Player(this, (COLS / 2) * T, this.topY(COLS / 2) - 30);
+    this.hero = new Player(this, 4 * T, this.topY(4) - 30);
     this.player = this.hero.s;
     this.mapColliders.push(this.physics.add.collider(this.player, this.layer));
 
@@ -122,6 +136,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     this.potions = this.physics.add.group();
     this.hazards = this.physics.add.group({ allowGravity: false });
     this.mapColliders.push(this.physics.add.collider(this.coins, this.layer), this.physics.add.collider(this.potions, this.layer));
+    this.buildPlatforms(MAPS[this.mapIndex]?.id ?? "woods");
     this.physics.add.overlap(this.player, this.coins, (_p, c) => this.collectCoin(c as Phaser.Physics.Arcade.Image));
     this.physics.add.overlap(this.player, this.potions, (_p, c) => this.collectPotion(c as Phaser.Physics.Arcade.Image));
     this.physics.add.overlap(this.player, this.hazards, (_p, h) => {
@@ -133,16 +148,16 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     this.darken = this.add.rectangle(-200, -200, this.scale.width + 400, VIEW.HEIGHT + 400, 0x05030a, 0).setOrigin(0).setScrollFactor(0).setDepth(30);
 
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, COLS * T, ROWS * T);
-    cam.startFollow(this.player, true, 0.09, 0.09, 0, 30);
-    cam.setDeadzone(40, 0);
+    cam.setBounds(0, -SKY_RISE, COLS * T, ROWS * T + SKY_RISE);
+    cam.startFollow(this.player, true, 0.09, 0.08, 0, 20);
+    cam.setDeadzone(48, 32);
     cam.setZoom(VIEW.ZOOM);
     cam.fadeIn(600, 0, 0, 0);
-    this.physics.world.setBounds(0, -300, COLS * T, ROWS * T + 400);
+    this.physics.world.setBounds(0, -SKY_RISE, COLS * T, ROWS * T + SKY_RISE);
     this.player.setCollideWorldBounds(true);
 
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys("A,D,W,S,LEFT,RIGHT,UP,SPACE,J,K,L,E,I,SHIFT,ESC,P,F3") as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = kb.addKeys("A,D,W,S,LEFT,RIGHT,UP,DOWN,SPACE,J,K,L,E,I,SHIFT,ESC,P,F3") as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (p.wasTouch) return;
@@ -259,15 +274,21 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     const oy = (this.scale.height - sh) / 2;
     // All layers share a native pixel scale and bottom anchor; sparse interiors tile horizontally.
     const bh = sh - H * T;
-    const referenceHeight = Math.max(...def.layers.map((l) => l[1] ?? 272));
-    const pixelScale = bh / referenceHeight;
+    const layout = parallaxLayout(def.layers, sw, sh + SKY_RISE, H * T);
+    const pixelScale = 1;
     def.layers.forEach((l, i) => {
-      const ts = this.add.tileSprite(ox, oy, sw, bh, `bg_${def.id}_${i}`)
-        .setOrigin(0).setScrollFactor(0).setDepth(-10 + i);
-      ts.setTileScale(pixelScale);
-      ts.tilePositionY = (l[1] ?? referenceHeight) - bh / pixelScale;
-      this.bgs.push(ts);
-      this.mapObjects.push(ts);
+      const spec = layout[i];
+      if (!spec) return;
+      const sourceWidth = l[0] ?? 1;
+      const speed = def.layers.length === 1 ? 0.12 : 0.05 + i * 0.12;
+      const positions = repeatedLayerPositions(sourceWidth, spec.scale, sw, 0);
+      const images = positions.map((pos) => {
+        const image = this.add.image(ox + pos.x, oy + bh - spec.height, `bg_${def.id}_${i}`)
+          .setOrigin(0).setScrollFactor(0).setDepth(-10 + i).setDisplaySize(pos.width + 1, spec.height).setFlipX(pos.flipX);
+        this.mapObjects.push(image);
+        return image;
+      });
+      this.bgs.push({ images, sourceWidth, scale: spec.scale, width: sw, y: oy + bh - spec.height, speed });
     });
     // flat floor from the map's tileset (row 0 = surface, rows 1-2 = fill)
     const data: number[][] = [];
@@ -314,6 +335,87 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
       }
     }
     cam.setBackgroundColor(def.outdoor ? 0x1b2a30 : 0x0d0b12);
+    if (this.player && this.coins) this.buildPlatforms(def.id);
+  }
+
+  /** Semi-solid ledges: ascend through their undersides; land only from above. */
+  oneWay(a: unknown, b: unknown): boolean {
+    const mover = a as Phaser.Physics.Arcade.Sprite;
+    const ledge = b as Phaser.GameObjects.Zone;
+    const body = mover.body as Phaser.Physics.Arcade.Body | null;
+    const platformBody = ledge.body as Phaser.Physics.Arcade.StaticBody | null;
+    if (!body || !platformBody) return false;
+    const allowed = canLandOnLedge(body.velocity.y, body.prev.y + body.height, platformBody.top, mover === this.player && this.time.now < this.dropUntil);
+    if (allowed) {
+      if (mover === this.player) this.playerOnPlatAt = this.time.now;
+      else mover.setData("onPlat", ledge.getData("plat")).setData("onPlatAt", this.time.now);
+    }
+    return allowed;
+  }
+
+  attachLedges(mover: Phaser.GameObjects.GameObject | Phaser.GameObjects.Group) {
+    if (!this.platforms) return;
+    this.platformColliders.push(this.physics.add.collider(mover, this.platforms, undefined, this.oneWay, this));
+  }
+
+  buildPlatforms(id: string) {
+    this.platformColliders.forEach((collider) => collider.destroy());
+    this.platformColliders = [];
+    if (this.platforms) this.platforms.clear(true, true);
+    else this.platforms = this.physics.add.staticGroup();
+    this.dropUntil = 0;
+    this.playerOnPlatAt = -Infinity;
+    // Map-owned trail coins are not attracted from afar or duplicated after transitions.
+    for (const object of this.coins.getChildren()) {
+      const coin = object as Phaser.Physics.Arcade.Image;
+      if (!coin.getData("trail")) continue;
+      this.tweens.killTweensOf(coin);
+      coin.setData("trail", false).disableBody(true, true);
+    }
+    this.platformDefs = generatePlatforms(id, COLS * T, this.topY(0));
+    const key = `ground_${id}`;
+    for (const platform of this.platformDefs) {
+      // Use native 16px surface tiles from this world's own ground texture.
+      for (let offset = 0; offset < platform.w; offset += T) {
+        const image = this.add.image(platform.x + offset, platform.y, key).setOrigin(0).setDepth(4);
+        image.setCrop(0, 0, T, T);
+        this.mapObjects.push(image);
+      }
+      const zone = this.add.zone(platform.x + platform.w / 2, platform.y + 4, platform.w, 8);
+      this.physics.add.existing(zone, true);
+      zone.setData("plat", platform);
+      this.platforms.add(zone);
+      for (let i = 0; i < Math.floor(platform.w / 32); i++) {
+        const x = platform.x + 16 + i * 32;
+        const y = platform.y - 16;
+        const coin = this.coins.get(x, y, "coin") as Phaser.Physics.Arcade.Image | null;
+        if (!coin) continue;
+        coin.enableBody(true, x, y, true, true).setDepth(6).setVelocity(0, 0);
+        coin.setData("trail", true).setData("born", -10000).setData("value", platform.secret ? 8 : 1);
+        (coin.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
+        if (platform.secret) coin.setScale(1.5);
+        else coin.setScale(1);
+        this.tweens.add({ targets: coin, y: y - 3, duration: 800, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+      }
+    }
+    this.attachLedges(this.player);
+    this.attachLedges(this.coins);
+    this.attachLedges(this.potions);
+    for (const enemy of this.enemies.getChildren()) this.attachLedges(enemy);
+    for (const echo of this.echoes) this.attachLedges(echo.sprite);
+  }
+
+  guardLedge(enemy: Enemy, time: number) {
+    if (!enemy.alive || enemy.def.fly || time - (enemy.getData("onPlatAt") ?? -Infinity) > 120) return;
+    const platform = enemy.getData("onPlat") as Platform | undefined;
+    if (!platform) return;
+    const body = enemy.body as Phaser.Physics.Arcade.Body;
+    if (enemy.state !== "PATROL" && Math.abs(this.player.y - enemy.y) < 30) return;
+    if ((enemy.x < platform.x + 12 && body.velocity.x < 0) || (enemy.x > platform.x + platform.w - 12 && body.velocity.x > 0)) {
+      enemy.patrolDir = enemy.x < platform.x + platform.w / 2 ? 1 : -1;
+      enemy.home = platform.x + platform.w / 2;
+      body.setVelocityX(enemy.patrolDir * enemy.speed * 0.35);
+    }
   }
 
   /** Open a portal ahead of the player; walking into it travels to the next map. */
@@ -392,6 +494,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     while (this.echoes.length >= ECHO.MAX) this.echoes.shift()!.fade();
     const e = new Echo(this, seg, ++this.echoCount);
     this.mapColliders.push(this.physics.add.collider(e.sprite, this.layer));
+    this.attachLedges(e.sprite);
     this.echoes.push(e);
     this.audio.play("upgrade");
     this.bus.emit("notify", { text: `ECHO ${this.echoCount} AWAKENS`, kind: "echo" });
@@ -435,6 +538,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
       const b = new Enemy(this, col * T, this.topY(col) - 120, "boss", BOSS.def, { elite: false, hpMul: sc.hp * 0.6 * tierMul, dmgMul: sc.dmg * 0.8, spdMul: 1, waveId: n });
       this.enemies.add(b);
       this.mapColliders.push(this.physics.add.collider(b, this.layer));
+      this.attachLedges(b);
       this.waves.addExtra();
       this.boss = b;
       this.cameras.main.flash(300, 120, 60, 200);
@@ -460,6 +564,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     const e = new Enemy(this, pt.x, pt.y, kind, def, { elite, hpMul: sc.hp, dmgMul: sc.dmg, spdMul: sc.speed, waveId: this.waves.wave, aggro: true });
     this.enemies.add(e);
     this.mapColliders.push(this.physics.add.collider(e, this.layer));
+    if (!def.fly) this.attachLedges(e);
     e.setAlpha(0);
     this.tweens.add({ targets: e, alpha: 1, duration: 350 });
     if (this.settings.particles) {
@@ -626,7 +731,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
         continue;
       }
       c.enableBody(true, x, y, true, true);
-      c.setData("value", per).setData("born", this.time.now).setDepth(6).setBounce(0.5).setDragX(120);
+      c.setData("value", per).setData("born", this.time.now).setData("trail", false).setScale(1).setDepth(6).setBounce(0.5).setDragX(120);
       (c.body as Phaser.Physics.Arcade.Body).setAllowGravity(true);
       c.setVelocity(Phaser.Math.Between(-110, 110), Phaser.Math.Between(-260, -140));
     }
@@ -635,6 +740,8 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
   collectCoin(c: Phaser.Physics.Arcade.Image) {
     if (!c.active || this.time.now - (c.getData("born") ?? 0) < 250) return;
     const v = c.getData("value") ?? 1;
+    this.tweens.killTweensOf(c);
+    c.setData("trail", false);
     this.coins.killAndHide(c);
     c.disableBody(true, true);
     this.coinCount += v;
@@ -828,6 +935,16 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
       block: k["L"]!.isDown || k["S"]!.isDown || (!ptr.wasTouch && ptr.rightButtonDown()) || t.block,
       special: jd(k["E"]!) || jd(k["I"]!) || (t.special && !this.prevTouch.special),
     };
+    const down = k["S"]?.isDown || k["DOWN"]?.isDown || t.block;
+    if (canDropThrough(this.time.now, this.playerOnPlatAt, !!down, inp.jumpPressed)) {
+      inp.jumpPressed = false;
+      inp.block = false;
+      this.dropUntil = this.time.now + 260;
+      this.player.setVelocityY(100);
+      this.hero.lastGround = -Infinity;
+      this.hero.jumpBuf = -Infinity;
+      if (this.hero.state === "BLOCK") this.hero.state = "FREE";
+    }
     this.prevTouch = { ...t };
     this.clickAttack = false;
     return inp;
@@ -836,7 +953,16 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
   override update(time: number) {
     const cam = this.cameras.main;
     // parallax: each of the pack's background layers scrolls at its own depth, with a slow ambient drift
-    if (this.bgs.length > 1) this.bgs.forEach((b, i) => (b.tilePositionX = (cam.scrollX * (0.06 + i * 0.14) + time * 0.0025 * (i + 1)) / b.tileScaleX));
+    this.bgs.forEach((bg) => {
+      const positions = repeatedLayerPositions(bg.sourceWidth, bg.scale, bg.width, cam.scrollX * bg.speed);
+      const ox = (this.scale.width - bg.width) / 2;
+      positions.forEach((position, i) => {
+        const image = bg.images[i];
+        if (!image) return;
+        image.setPosition(ox + position.x, bg.y - cam.scrollY * bg.speed)
+          .setDisplaySize(position.width + 1, image.displayHeight).setFlipX(position.flipX);
+      });
+    });
 
     if (Phaser.Input.Keyboard.JustDown(this.keys["ESC"]!) || Phaser.Input.Keyboard.JustDown(this.keys["P"]!)) this.bus.emit("pause");
 
@@ -865,6 +991,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
         continue;
       }
       e.ai(time);
+      this.guardLedge(e, time);
       if (e.y > ROWS * T + 60 && e.alive) this.killEnemy(e);
     }
 
@@ -872,6 +999,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
     for (const o of this.coins.getChildren()) {
       const c = o as Phaser.Physics.Arcade.Image;
       if (!c.active) continue;
+      if (c.getData("trail")) continue;
       const age = time - (c.getData("born") ?? 0);
       if (age > 600 && (Phaser.Math.Distance.Between(c.x, c.y, this.player.x, this.player.y) < 90 || age > 1800)) {
         (c.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
