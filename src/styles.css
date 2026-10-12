@@ -281,4 +281,18 @@
   @media (max-width: 600px) { .title-logo { font-size: 3rem; } .notify { font-size: 1.2rem; } }
 }
 @keyframes title-drift { to { transform: translateX(-2%); } }
+@layer components {
+  .menu-scenery { position: absolute; inset: 0; overflow: hidden; --look-x: 0px; --look-y: 0px; }
+  .menu-depth { position: absolute; inset: -3%; overflow: hidden; transition: transform 800ms ease-out; }
+  .menu-depth-0 { transform: translate(calc(var(--look-x) * .2), calc(var(--look-y) * .2)); }
+  .menu-depth-1 { transform: translate(calc(var(--look-x) * .6), calc(var(--look-y) * .6)); }
+  .menu-depth-2 { transform: translate(var(--look-x), var(--look-y)); }
+  .menu-pan { height: 100%; width: max-content; display: flex; animation: menu-pan 100s linear infinite; }
+  .menu-depth-1 .menu-pan { animation-duration: 65s; }
+  .menu-depth-2 .menu-pan { animation-duration: 38s; }
+  .menu-pan img { height: 100%; width: auto; max-width: none; flex: none; image-rendering: pixelated; }
+  .menu-pan img:nth-child(even) { transform: scaleX(-1); }
+  .menu-ground { position: absolute; inset: 92% 0 0; background: var(--background); border-top: 4px solid var(--border); }
+}
+@keyframes menu-pan { to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

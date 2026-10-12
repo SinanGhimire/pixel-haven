@@ -13,3 +13,5 @@
 - Resolve game artwork through the logical-path media registry and immutable asset pointers; this preserves loader contracts without committing binaries.
 - Define each fantasy world in the map registry using matching source layers, floor tiles, and props; maintain a common playable floor and uniform pixel scale.
 - Preserve the original device-local game progress and settings; this scenery migration must not change progression or introduce account requirements.
+- Keep platform generation and one-way collision decisions in pure modules so reachability and drop-through rules are testable independently of Phaser.
+- Load the game engine through a createClientOnlyFn boundary so server bundling excludes browser engine imports.

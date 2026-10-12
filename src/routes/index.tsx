@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { ClientOnly, createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { SaveManager, type Records, type Settings } from "@/game/save";
 import { SettingsPanel } from "@/components/game/SettingsPanel";
-import { gameMedia } from "@/game/media";
+import { MenuScenery } from "@/components/game/MenuScenery";
 import { Button } from "@/components/ui/button";
 import { Armory } from "@/components/game/Armory";
 
@@ -11,10 +11,10 @@ const GameView = lazy(() => import("@/components/game/GameView").then((m) => ({ 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Dusk Hollow — wave survival action platformer" },
-      { name: "description", content: "Survive endless waves across twelve fantasy worlds, from Dusk Woods to Castle Hall: combo attacks, parries, upgrades and bosses." },
-      { property: "og:title", content: "Dusk Hollow — wave survival action platformer" },
-      { property: "og:description", content: "Survive endless waves across twelve fantasy worlds, from Dusk Woods to Castle Hall: combo attacks, parries, upgrades and bosses." },
+      { title: "Dusk Hollow — fantasy exploration platformer" },
+      { name: "description", content: "Climb tiered fantasy worlds, discover treasure and battle enemies with double jumps, parries and permanent upgrades." },
+      { property: "og:title", content: "Dusk Hollow — fantasy exploration platformer" },
+      { property: "og:description", content: "Climb tiered fantasy worlds, discover treasure and battle enemies with double jumps, parries and permanent upgrades." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -36,18 +36,13 @@ function Index() {
 
   if (playing)
     return (
-      <Suspense fallback={<div className="title-screen" />}>
+      <ClientOnly fallback={<div className="title-screen" />}><Suspense fallback={<div className="title-screen" />}>
         <GameView onHome={() => setPlaying(false)} />
-      </Suspense>
+      </Suspense></ClientOnly>
     );
   return (
     <main className="title-screen w-full">
-      <div className="absolute inset-0">
-        {[0, 1, 2, 3].map((i) => (
-          <img key={i} className={`title-par title-par-${i}`} src={gameMedia(`/game/maps/woods/bg${i}.png`)} alt="" />
-        ))}
-        <div className="title-shade" />
-      </div>
+      <MenuScenery />
       <div className="relative z-10 flex w-full flex-col items-center justify-center px-4 text-center">
         {showArmory ? (
           <Armory onBack={() => setShowArmory(false)} />
@@ -70,7 +65,7 @@ function Index() {
                       .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.("landscape"))
                       .catch(() => {});
                   }
-                }}>Enter the Arena</Button>
+                }}>Begin Adventure</Button>
               <Button variant="game" size="game" className=" menu-btn-ghost" onClick={() => setShowArmory(true)}>Armory</Button>
               <Button variant="game" size="game" className=" menu-btn-ghost" onClick={() => setShowSettings(true)}>Settings</Button>
             </div>
