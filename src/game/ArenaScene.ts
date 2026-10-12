@@ -59,7 +59,7 @@ export class ArenaScene extends Phaser.Scene implements EnemyHost, EchoHost {
   bossSpawned = new Set<number>();
   hitstopUntil = 0;
   bgs: { images: Phaser.GameObjects.Image[]; sourceWidth: number; scale: number; width: number; y: number; speed: number }[] = [];
-  platforms?: Phaser.Physics.Arcade.StaticGroup;
+  platforms: Phaser.Physics.Arcade.StaticGroup | undefined;
   platformDefs: Platform[] = [];
   platformColliders: Phaser.Physics.Arcade.Collider[] = [];
   playerOnPlatAt = -Infinity;
